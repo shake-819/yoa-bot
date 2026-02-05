@@ -2,8 +2,9 @@ import discord
 from discord.ext import commands, tasks
 import json
 from datetime import datetime, timedelta, timezone
-import aiohttp
+from aiohttp import web
 import os
+import asyncio
 
 TEN_MESSAGES = {
     10: "まだイける",
@@ -21,7 +22,6 @@ TEN_MESSAGES = {
 ALLOWED_ROLE_ID = 1466580088333271334
 
 TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 TRIGGER_WORD = "よあくんOD"
 EVENTS_FILE = "events.json"
@@ -44,12 +44,7 @@ def save_events(data):
     with open(EVENTS_FILE, "w") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-async def webhook_send(content):
-    async with aiohttp.ClientSession() as session:
-        webhook = discord.Webhook.from_url(WEBHOOK_URL, session=session)
-        await webhook.send(content)
-
-# ---------- events ----------
+# ---------- discord ----------
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
@@ -71,15 +66,18 @@ async def on_message(message):
         data["count"] += 1
         save_events(data)
 
-        await webhook_send("ｺﾞｯｸﾝ💊")
+        # 毎回
+        await message.channel.send("ｺﾞｯｸﾝ💊")
 
+        # 10回刻み
         if data["count"] % 10 == 0:
             msg = TEN_MESSAGES.get(data["count"])
             if msg:
-                await webhook_send("{msg}")
+                await message.channel.send(
+                    f"💊 {data['count']}回目\n{msg}"
+                )
 
     await bot.process_commands(message)
-
 
 # ---------- JST 0:00 reset ----------
 @tasks.loop(minutes=1)
@@ -90,7 +88,11 @@ async def daily_reset():
         count = data["count"]
 
         if count > 0:
-            await webhook_send(f"今日は💊 {count}回飲みました笑笑")
+            channel = bot.get_all_channels()
+            for ch in channel:
+                if isinstance(ch, discord.TextChannel):
+                    await ch.send(f"今日は💊 {count}回飲みました笑笑")
+                    break
 
         save_events({"count": 0})
 
@@ -98,7 +100,26 @@ async def daily_reset():
 async def before_reset():
     await bot.wait_until_ready()
 
-bot.run(TOKEN)
+# ---------- web server ----------
+async def health(request):
+    return web.Response(text="OK")
+
+async def start_web():
+    app = web.Application()
+    app.router.add_get("/", health)
+    app.router.add_get("/health", health)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    port = int(os.getenv("PORT", 3000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
+# ---------- main ----------
+async def main():
+    await start_web()
+    await bot.start(TOKEN)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=3000)
+    asyncio.run(main())
