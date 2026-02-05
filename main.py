@@ -58,8 +58,8 @@ async def on_message(message):
         return
 
     # ロールチェック
-    if not any(role.id == ALLOWED_ROLE_ID for role in message.author.roles):
-        return
+    #if not any(role.id == ALLOWED_ROLE_ID for role in message.author.roles):
+        #return
 
     if TRIGGER_WORD in message.content:
         data = load_events()
