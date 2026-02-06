@@ -2,9 +2,21 @@ import discord
 from discord.ext import commands, tasks
 import json
 from datetime import datetime, timedelta, timezone
-from aiohttp import web
+from aiohttp import web, ClientSession
 import os
 import asyncio
+import base64
+
+# ---------- config ----------
+TOKEN = os.getenv("BOT_TOKEN")
+
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GITHUB_OWNER = os.getenv("GITHUB_OWNER")
+GITHUB_REPO = os.getenv("GITHUB_REPO")
+GITHUB_PATH = os.getenv("GITHUB_PATH", "events.json")
+
+TRIGGER_WORD = "よあくんOD"
+JST = timezone(timedelta(hours=9))
 
 TEN_MESSAGES = {
     10: "まだイける",
@@ -19,57 +31,67 @@ TEN_MESSAGES = {
     100: "@#%&▲◯■!!!"
 }
 
-#ALLOWED_ROLE_ID = 1466580088333271334
-
-TOKEN = os.getenv("BOT_TOKEN")
-
-TRIGGER_WORD = "よあくんOD"
-EVENTS_FILE = "events.json"
-
-JST = timezone(timedelta(hours=9))
-
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ---------- util ----------
-def load_events():
-    if not os.path.exists(EVENTS_FILE):
-        with open(EVENTS_FILE, "w") as f:
-            json.dump({"count": 0}, f)
-    with open(EVENTS_FILE, "r") as f:
-        return json.load(f)
+# ---------- GitHub util ----------
+async def github_headers():
+    return {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json"
+    }
 
-def save_events(data):
-    with open(EVENTS_FILE, "w") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+async def load_events():
+    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{GITHUB_PATH}"
+
+    async with ClientSession() as session:
+        async with session.get(url, headers=await github_headers()) as res:
+            if res.status == 200:
+                data = await res.json()
+                content = base64.b64decode(data["content"]).decode("utf-8")
+                return json.loads(content), data["sha"]
+
+    return {"count": 0}, None
+
+async def save_events(data, sha=None):
+    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{GITHUB_PATH}"
+
+    body = {
+        "message": "update events.json",
+        "content": base64.b64encode(
+            json.dumps(data, ensure_ascii=False, indent=2).encode()
+        ).decode()
+    }
+
+    if sha:
+        body["sha"] = sha
+
+    async with ClientSession() as session:
+        await session.put(
+            url,
+            headers=await github_headers(),
+            json=body
+        )
 
 # ---------- discord ----------
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
     daily_reset.start()
-    for guild in bot.guilds:
-        print(guild.name, guild.icon.url if guild.icon else None)
 
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    # ロールチェック
-    #if not any(role.id == ALLOWED_ROLE_ID for role in message.author.roles):
-        #return
-
     if TRIGGER_WORD in message.content:
-        data = load_events()
+        data, sha = await load_events()
         data["count"] += 1
-        save_events(data)
+        await save_events(data, sha)
 
-        # 毎回
         await message.channel.send("ｺﾞｯｸﾝ💊")
 
-        # 10回刻み
         if data["count"] % 10 == 0:
             msg = TEN_MESSAGES.get(data["count"])
             if msg:
@@ -84,17 +106,16 @@ async def on_message(message):
 async def daily_reset():
     now = datetime.now(JST)
     if now.hour == 0 and now.minute == 0:
-        data = load_events()
+        data, sha = await load_events()
         count = data["count"]
 
         if count > 0:
-            channel = bot.get_all_channels()
-            for ch in channel:
+            for ch in bot.get_all_channels():
                 if isinstance(ch, discord.TextChannel):
                     await ch.send(f"今日は💊 {count}回飲みました笑笑")
                     break
 
-        save_events({"count": 0})
+        await save_events({"count": 0}, sha)
 
 @daily_reset.before_loop
 async def before_reset():
