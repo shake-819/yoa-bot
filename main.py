@@ -16,6 +16,7 @@ GITHUB_REPO = os.getenv("GITHUB_REPO")
 GITHUB_PATH = os.getenv("GITHUB_PATH", "events.json")
 
 TRIGGER_WORD = "よあくんOD"
+CHECK_WORD = "今何回"
 JST = timezone(timedelta(hours=9))
 
 TEN_MESSAGES = {
@@ -77,7 +78,7 @@ async def save_events(data, sha=None):
 # ---------- discord ----------
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}")
+    print(f"Logged in as {bot.user} | PID:{os.getpid()}")
     daily_reset.start()
 
 @bot.event
@@ -85,6 +86,7 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    # 💊 カウント増加
     if TRIGGER_WORD in message.content:
         data, sha = await load_events()
         data["count"] += 1
@@ -98,6 +100,13 @@ async def on_message(message):
                 await message.channel.send(
                     f"💊 {data['count']}回目\n{msg}"
                 )
+
+    # 👇 追加：今何回か確認するだけ（増えない）
+    if CHECK_WORD in message.content:
+        data, _ = await load_events()
+        await message.channel.send(
+            f"今は 💊 **{data['count']}回** ｜PID:{os.getpid()}"
+        )
 
     await bot.process_commands(message)
 
